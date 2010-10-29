@@ -1,7 +1,9 @@
 package com.rackspace.apps;
 
+import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ListActivity;
+import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -50,7 +52,7 @@ public class Racknotes extends ListActivity
     String password = "";
     Vector notesVector = null;
     ArrayAdapter<NoteForListView> listAdapter;
-    NotesDB db;
+    NotesDB notesDB;
     ArrayList<NoteForListView> boundNotes;
 
     @Override
@@ -60,14 +62,14 @@ public class Racknotes extends ListActivity
         Context context = getApplicationContext();
         SharedPreferences prefs =
             PreferenceManager.getDefaultSharedPreferences(context);
-        email = prefs.getString("email", "email-missing");
-        password = prefs.getString("password", "password-missing");
+        email = prefs.getString("email", "email-missing").trim();
+        password = prefs.getString("password", "password-missing").trim();
 
         int layout = android.R.layout.simple_list_item_1;
         //int layout = R.layout.list_item;
 
-        db = new NotesDB(getApplicationContext());
-        boundNotes = db.getNotes();
+        notesDB = new NotesDB(getApplicationContext());
+        boundNotes = notesDB.getNotes();
         listAdapter = new ArrayAdapter<NoteForListView>(    
             this, layout, boundNotes);
         setListAdapter(listAdapter);
@@ -85,20 +87,6 @@ public class Racknotes extends ListActivity
                 showAlert(content);
             }
         });
-    }
-
-    private void showAlert(String msg) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setMessage(msg)
-            .setCancelable(false)
-            .setPositiveButton(
-                "OK", new DialogInterface.OnClickListener() {
-                public void onClick(DialogInterface dialog, int id) {
-                    dialog.cancel();
-                }
-            });
-        AlertDialog alert = builder.create();
-        alert.show();
     }
 
     @Override
@@ -125,12 +113,26 @@ public class Racknotes extends ListActivity
         }
     }
 
-    private List<JSONObject> getNotes() throws org.json.JSONException {
+    private void showAlert(String msg) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(msg)
+            .setCancelable(false)
+            .setPositiveButton(
+                "OK", new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface dialog, int id) {
+                    dialog.cancel();
+                }
+            });
+        AlertDialog alert = builder.create();
+        alert.show();
+    }
+
+    private List<JSONObject> getNotesFromNet() throws org.json.JSONException {
         List<JSONObject> notes = new ArrayList<JSONObject>();
         String json = requestJSON(
             "http://apps.rackspace.com/api/0.9.0/" + email
             + "/notes");
-        Log.d("Racknotes", json);
+        Log.d("Racknotes json:", json);
         JSONObject jsonObject = (JSONObject)
             new JSONTokener(json).nextValue();
         JSONArray jsonArray = jsonObject.getJSONArray("notes");
@@ -146,7 +148,7 @@ public class Racknotes extends ListActivity
             jsonObject = jsonObject.getJSONObject("note");
             notes.add(jsonObject);
             String subject = jsonObject.getString("subject");
-            Log.d("Racknotes", subject);
+            Log.d("Racknotes", "subject: " + subject);
         }
         return notes;
     }
@@ -165,7 +167,7 @@ public class Racknotes extends ListActivity
                 sb.append(line);
             }
         } catch (Exception e) {
-            Log.d("Racknotes", e.toString());
+            Log.d("Racknotes", "requestJSON: " + e.toString());
         }
         return sb.toString();
     }
@@ -184,18 +186,41 @@ public class Racknotes extends ListActivity
 
     private void refreshNotes() {
         boundNotes.clear();
-        try {
-            for (JSONObject note: getNotes()) {
-                int id = note.getInt("id");
-                String subject = note.getString("subject");
-                String content = note.getString("content");
-                boundNotes.add(new NoteForListView(id, subject, content));
+        ProgressDialog progress = ProgressDialog.show(Racknotes.this, "", 
+            "Loading. Please wait...", true);
+        NotesRefresher refresher = new NotesRefresher(this, progress);
+        Thread thread = new Thread(refresher);
+        Log.d("Racknotes", "refreshNotes starting thread");
+        thread.start();
+    }
+
+    class NotesRefresher implements Runnable {
+        Activity act;
+        ProgressDialog progress;
+        public NotesRefresher(Activity act, ProgressDialog progress) {
+            this.act = act;
+            this.progress = progress;
+        }
+        public void run() {
+            try {
+                for (JSONObject note: getNotesFromNet()) {
+                    int id = note.getInt("id");
+                    String subject = note.getString("subject");
+                    String content = note.getString("content");
+                    boundNotes.add(new NoteForListView(id, subject, content));
+                }
+            } catch (Exception e) {
+                Log.d("Racknotes", "NotesRefresher: " + e.toString());
+            } finally {
+                act.runOnUiThread(new Runnable() {
+                    public void run() {
+                        progress.dismiss();
+                        listAdapter.notifyDataSetChanged();
+                    }
+                });
             }
-            listAdapter.notifyDataSetChanged();
             NotesDB db = new NotesDB(getApplicationContext());
             db.resetNotes(boundNotes);
-        } catch (Exception e) {
-            Log.d("Racknotes", "refreshNotes: " + e.toString());
         }
     }
 
@@ -232,7 +257,6 @@ public class Racknotes extends ListActivity
                 + " created TEXT"
                 + ");";
             db.execSQL(sql);
-            db.close();
         }
 
         @Override
