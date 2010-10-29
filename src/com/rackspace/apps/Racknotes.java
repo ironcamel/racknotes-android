@@ -59,12 +59,6 @@ public class Racknotes extends ListActivity
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        Context context = getApplicationContext();
-        SharedPreferences prefs =
-            PreferenceManager.getDefaultSharedPreferences(context);
-        email = prefs.getString("email", "email-missing").trim();
-        password = prefs.getString("password", "password-missing").trim();
-
         int layout = android.R.layout.simple_list_item_1;
         //int layout = R.layout.list_item;
 
@@ -128,8 +122,14 @@ public class Racknotes extends ListActivity
     }
 
     private List<JSONObject> getNotesFromNet() throws org.json.JSONException {
+        Context context = getApplicationContext();
+        SharedPreferences prefs =
+            PreferenceManager.getDefaultSharedPreferences(context);
+        String email = prefs.getString("email", "email-missing").trim();
+        String password = prefs.getString("password","passwd-missing").trim();
+        DefaultHttpClient client = makeHttpClient(email, password);
         List<JSONObject> notes = new ArrayList<JSONObject>();
-        String json = requestJSON(
+        String json = requestJSON(client,
             "http://apps.rackspace.com/api/0.9.0/" + email
             + "/notes");
         Log.d("Racknotes json:", json);
@@ -142,7 +142,7 @@ public class Racknotes extends ListActivity
             String uri =
                 jsonArray.getJSONObject(i).getString("uri");
             uris.add(uri);
-            json = requestJSON(uri);
+            json = requestJSON(client, uri);
             jsonObject = (JSONObject)
                 new JSONTokener(json).nextValue();
             jsonObject = jsonObject.getJSONObject("note");
@@ -153,10 +153,9 @@ public class Racknotes extends ListActivity
         return notes;
     }
 
-    private String requestJSON(String uri) {
+    private String requestJSON(DefaultHttpClient client, String uri) {
         HttpGet request = new HttpGet(uri);
         request.addHeader("Accept", "application/json");
-        DefaultHttpClient client = makeHttpClient();
         StringBuffer sb = new StringBuffer();
         try {
             HttpResponse res = client.execute(request);
@@ -172,7 +171,7 @@ public class Racknotes extends ListActivity
         return sb.toString();
     }
 
-    private DefaultHttpClient makeHttpClient() {
+    private DefaultHttpClient makeHttpClient(String email, String password) {
         UsernamePasswordCredentials creds = new UsernamePasswordCredentials(
             email, password);
         AuthScope authScope = new AuthScope(
