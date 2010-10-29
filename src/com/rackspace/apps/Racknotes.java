@@ -1,10 +1,16 @@
 package com.rackspace.apps;
 
+import android.app.AlertDialog;
 import android.app.ListActivity;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
+import android.database.Cursor;
+import android.database.SQLException;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
 import android.net.http.AndroidHttpClient;
 import android.os.Bundle;
 import android.preference.Preference;
@@ -43,8 +49,9 @@ public class Racknotes extends ListActivity
     String email = "";
     String password = "";
     Vector notesVector = null;
-    ArrayList<NoteForListView> boundNotes = new ArrayList<NoteForListView>();
     ArrayAdapter<NoteForListView> listAdapter;
+    NotesDB db;
+    ArrayList<NoteForListView> boundNotes;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -56,19 +63,11 @@ public class Racknotes extends ListActivity
         email = prefs.getString("email", "email-missing");
         password = prefs.getString("password", "password-missing");
 
-        //List<String> notes = new ArrayList<String>();
-        try {
-            for (JSONObject note: getNotes()) {
-                String subject = note.getString("subject");
-                String content = note.getString("content");
-                boundNotes.add(new NoteForListView(subject, content));
-            }
-        } catch (Exception e) {
-            Log.d("Racknotes", e.toString());
-        }
+        int layout = android.R.layout.simple_list_item_1;
+        //int layout = R.layout.list_item;
 
-        //int layout = android.R.layout.simple_list_item_1;
-        int layout = R.layout.list_item;
+        db = new NotesDB(getApplicationContext());
+        boundNotes = db.getNotes();
         listAdapter = new ArrayAdapter<NoteForListView>(    
             this, layout, boundNotes);
         setListAdapter(listAdapter);
@@ -79,14 +78,27 @@ public class Racknotes extends ListActivity
         lv.setOnItemClickListener(new OnItemClickListener() {
             public void onItemClick(AdapterView<?> parent, View view,
                 int position, long id) {
-                String text = ((TextView) view).getText().toString();
-                text = boundNotes.get(position).content;
-                Toast.makeText(getApplicationContext(), text,Toast.LENGTH_SHORT)
-                .show();
-                //boundNotes.add(new NoteForListView("aaa", "bbb"));
-                //listAdapter.notifyDataSetChanged();
+                //String text = ((TextView) view).getText().toString();
+                String content  = boundNotes.get(position).content;
+                //Toast.makeText(getApplicationContext(),
+                //  text,Toast.LENGTH_SHORT).show();
+                showAlert(content);
             }
         });
+    }
+
+    private void showAlert(String msg) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setMessage(msg)
+            .setCancelable(false)
+            .setPositiveButton(
+                "OK", new DialogInterface.OnClickListener() {
+                public void onClick(DialogInterface dialog, int id) {
+                    dialog.cancel();
+                }
+            });
+        AlertDialog alert = builder.create();
+        alert.show();
     }
 
     @Override
@@ -100,9 +112,13 @@ public class Racknotes extends ListActivity
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
         case R.id.settings:
-            Intent intent = new Intent(getApplicationContext(), Foo.class);
+            Intent intent =
+                new Intent(getApplicationContext(), SettingsPage.class);
             //startActivity[ForResult](i);
             startActivity(intent);
+            return true;
+        case R.id.refresh:
+            refreshNotes();
             return true;
         default:
             return super.onOptionsItemSelected(item);
@@ -155,7 +171,6 @@ public class Racknotes extends ListActivity
     }
 
     private DefaultHttpClient makeHttpClient() {
-        Log.d("Racknotes", "makeHttpClient email: " + email);
         UsernamePasswordCredentials creds = new UsernamePasswordCredentials(
             email, password);
         AuthScope authScope = new AuthScope(
@@ -167,15 +182,93 @@ public class Racknotes extends ListActivity
         return client;
     }
 
+    private void refreshNotes() {
+        boundNotes.clear();
+        try {
+            for (JSONObject note: getNotes()) {
+                int id = note.getInt("id");
+                String subject = note.getString("subject");
+                String content = note.getString("content");
+                boundNotes.add(new NoteForListView(id, subject, content));
+            }
+            listAdapter.notifyDataSetChanged();
+            NotesDB db = new NotesDB(getApplicationContext());
+            db.resetNotes(boundNotes);
+        } catch (Exception e) {
+            Log.d("Racknotes", "refreshNotes: " + e.toString());
+        }
+    }
+
     class NoteForListView {
+        int id;
         String subject;
         String content;
-        public NoteForListView(String subject, String content) {
+        public NoteForListView(int id, String subject, String content) {
+            this.id = id;
             this.subject = subject;
             this.content = content;
         }
         public String toString() {
             return subject;
+            //return id + "";
+        }
+    }
+
+    public class NotesDB extends SQLiteOpenHelper {
+        private static final int DATABASE_VERSION = 1;
+
+        NotesDB(Context context) {
+            super(context, "notes", null, DATABASE_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            String sql =
+                "CREATE TABLE notes ("
+                + " id INT PRIMARY KEY,"
+                + " subject TEXT,"
+                + " content TEXT,"
+                + " last_modified TEXT,"
+                + " created TEXT"
+                + ");";
+            db.execSQL(sql);
+            db.close();
+        }
+
+        @Override
+        public void onUpgrade(
+                SQLiteDatabase db, int oldVersion, int newVersion) {}
+
+        public ArrayList getNotes() {
+            SQLiteDatabase db = getReadableDatabase();
+            String sql = "SELECT id, subject, content FROM notes";
+            Cursor c = db.rawQuery(sql, new String[0]);
+            ArrayList<NoteForListView> notes = new ArrayList<NoteForListView>();
+            while (c.moveToNext()) {
+                int id = c.getInt(0);
+                String subject = c.getString(1);
+                String content = c.getString(2);
+                NoteForListView note =
+                    new NoteForListView(id, subject, content);
+                notes.add(note);
+                Log.d("Racknotes", "NotesDB.getNotes: " + note.toString());
+            }
+            c.close();
+            db.close();
+            return notes;
+        }
+
+        public void resetNotes(List<NoteForListView> notes)
+                throws SQLException {
+            SQLiteDatabase db = getWritableDatabase();
+            String sql = "DELETE FROM notes;";
+            db.execSQL(sql);
+            sql = "INSERT INTO notes (id, subject, content) values (?,?,?);";
+            for (NoteForListView note : notes) {
+                db.execSQL(sql,
+                    new Object[]{note.id, note.subject, note.content});
+            }
+            db.close();
         }
     }
 }

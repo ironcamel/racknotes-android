@@ -12,7 +12,7 @@ import android.preference.PreferenceCategory;
 import android.preference.PreferenceScreen;
 import android.text.method.PasswordTransformationMethod;
 
-public class Foo extends PreferenceActivity {
+public class SettingsPage extends PreferenceActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
